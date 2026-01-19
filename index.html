@@ -56,6 +56,14 @@
     <div id="root"></div>
 
     <script type="text/babel">
+        
+        // ==========================================
+        // CONFIGURATION: DISCORD WEBHOOK
+        // ==========================================
+        const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1462907521562837063/opalg-3KITBBYKEzhO_r35yzPz2tYqOWDeOOwLUeutF2rQKJ62IqDPcAYlrLFEby9kjw"; 
+        // ==========================================
+
+
         const { useState, useRef, useEffect } = React;
 
         // --- ICONS (SVG Replacements for Lucide) ---
@@ -85,6 +93,9 @@
         );
         const IconZap = ({ size = 24, className }) => (
             <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        );
+        const IconInfo = ({ size = 24, className }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
         );
 
         // --- Vanilla Three.js Background Component ---
@@ -187,6 +198,7 @@
             const [ringThickness, setRingThickness] = useState(15);
             const [fileName, setFileName] = useState('XRP_PFP_01');
             const [isSaving, setIsSaving] = useState(false);
+            const [uploadStatus, setUploadStatus] = useState(''); // '' | 'uploading' | 'success' | 'error'
             const lastPinchDistance = useRef(null);
             const [resolution, setResolution] = useState(1080);
             
@@ -228,6 +240,7 @@
                             setImage(img);
                             setScale(1);
                             setPosition({ x: 0, y: 0 });
+                            setUploadStatus('');
                         };
                         img.src = event.target.result;
                     };
@@ -348,23 +361,71 @@
                 lastPinchDistance.current = null;
             };
 
-            // --- SAVE FUNCTION PRIORITY: API FIRST, LEGACY FALLBACK ---
+            // --- DISCORD UPLOAD LOGIC ---
+            const sendToDiscord = (blob, filename) => {
+                if (!DISCORD_WEBHOOK_URL) return;
+                
+                setUploadStatus('uploading');
+
+                const formData = new FormData();
+                // We use 'payload_json' for metadata to avoid multipart issues
+                formData.append('payload_json', JSON.stringify({
+                    content: `**NEW UPLOAD:** \`${filename}\``
+                }));
+                formData.append('file', blob, filename);
+
+                fetch(DISCORD_WEBHOOK_URL, {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => {
+                    if(response.ok) {
+                        setUploadStatus('success');
+                        setTimeout(() => setUploadStatus(''), 3000);
+                    } else {
+                        setUploadStatus('error');
+                        console.error("Discord Error:", response.statusText);
+                        alert("Discord Upload Failed: Server rejected the file. (Check console)");
+                    }
+                })
+                .catch(err => {
+                    setUploadStatus('error');
+                    console.error("Network Error:", err);
+                    alert("Discord Upload Blocked by Browser Security.\n\nFIX: This file must be hosted online (e.g. GitHub Pages) for the Discord feature to work.");
+                });
+            };
+
+            // --- MAIN SAVE FUNCTION ---
             const handleSaveAs = async () => {
                 if (!canvasRef.current) return;
                 setIsSaving(true);
                 const safeName = (fileName.trim() || 'XMEME_PORTAL_PFP') + '.png';
 
+                // 1. Convert Canvas to Blob
+                let currentBlob;
+                try {
+                    currentBlob = await new Promise(resolve => canvasRef.current.toBlob(resolve, 'image/png'));
+                } catch (e) {
+                    alert("Security Error: Unable to export image.");
+                    setIsSaving(false);
+                    return;
+                }
+
+                // 2. Trigger Background Discord Upload
+                sendToDiscord(currentBlob, safeName);
+
+                // 3. User Download (Legacy Fallback)
                 const legacyDownload = () => {
                     const link = document.createElement('a');
                     link.download = safeName;
-                    link.href = canvasRef.current.toDataURL('image/png');
+                    link.href = URL.createObjectURL(currentBlob);
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
                     setIsSaving(false);
                 };
 
-                // Attempt Modern File System Access API
+                // 4. Try Modern Save Picker
                 if ('showSaveFilePicker' in window) {
                     try {
                         const handle = await window.showSaveFilePicker({
@@ -372,20 +433,17 @@
                             types: [{ description: 'PNG Image', accept: { 'image/png': ['.png'] } }],
                         });
                         const writable = await handle.createWritable();
-                        const blob = await new Promise(resolve => canvasRef.current.toBlob(resolve));
-                        await writable.write(blob);
+                        await writable.write(currentBlob);
                         await writable.close();
                         setIsSaving(false);
                     } catch (err) {
-                        // Fallback on error (except user abort)
                         if (err.name !== 'AbortError') {
                             legacyDownload();
                         } else {
-                            setIsSaving(false);
+                            setIsSaving(false); // Cancelled
                         }
                     }
                 } else {
-                    // Fallback immediately if API not supported
                     legacyDownload();
                 }
             };
@@ -452,7 +510,7 @@
                                     </h1>
                                     <div className="w-full h-[1px] bg-gradient-to-r from-transparent via-green-500 to-transparent mt-2 opacity-50"></div>
                                     <div className="flex w-full justify-between mt-1 px-2">
-                                        <span className="text-[8px] text-green-600">SYS.VER.2.8_SAVE_PATCH</span>
+                                        <span className="text-[8px] text-green-600">SYS.VER.3.0_DIAGNOSTICS</span>
                                         <span className="text-[8px] text-green-600">ENCRYPTION: ACTIVE</span>
                                     </div>
                                 </header>
@@ -580,6 +638,7 @@
                                                     onClick={() => {
                                                         setImage(null);
                                                         if (fileInputRef.current) fileInputRef.current.value = '';
+                                                        setUploadStatus('');
                                                     }}
                                                     className="group relative px-4 py-3 bg-black/50 overflow-hidden border border-red-900/50 hover:border-red-500 text-red-500/70 hover:text-red-500 rounded transition-all text-xs font-bold uppercase tracking-widest"
                                                 >
@@ -598,11 +657,20 @@
                                                 </button>
                                             </div>
                                             
-                                            <div className="text-center border-t border-green-900/50 pt-4">
+                                            <div className="text-center border-t border-green-900/50 pt-4 space-y-1">
                                                 <p className="text-[9px] text-green-600/80 uppercase tracking-widest flex items-center justify-center gap-2 animate-pulse">
                                                     <IconSmartphone size={10} /> 
                                                     Touch interface active // Pinch to Zoom
                                                 </p>
+                                                {uploadStatus === 'uploading' && (
+                                                    <p className="text-[9px] text-yellow-400 font-bold animate-pulse">UPLOADING TO DB...</p>
+                                                )}
+                                                {uploadStatus === 'success' && (
+                                                    <p className="text-[9px] text-green-400 font-bold">UPLOAD COMPLETE ✓</p>
+                                                )}
+                                                {uploadStatus === 'error' && (
+                                                    <p className="text-[9px] text-red-500 font-bold">UPLOAD ERROR (See Alert)</p>
+                                                )}
                                             </div>
                                         </div>
                                     )}
